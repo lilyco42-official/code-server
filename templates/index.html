@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>代码运行测试平台</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
+</head>
+<body>
+    <div class="auth-modal" id="authModal">
+        <div class="auth-box">
+            <h2 id="authTitle">登录</h2>
+            <input type="text" id="authUsername" placeholder="用户名">
+            <input type="email" id="authEmail" placeholder="邮箱" style="display:none">
+            <input type="password" id="authPassword" placeholder="密码">
+            <button onclick="submitAuth()" class="btn-run" id="authBtn">登录</button>
+            <button onclick="toggleAuthMode()" class="btn-clear" id="toggleAuthBtn">没有账号？注册</button>
+            <button onclick="closeAuthModal()" class="btn-cancel">取消</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>代码运行测试平台</h1>
+            <div class="user-info" id="userInfo">
+                <span id="usernameDisplay"></span>
+                <button onclick="logout()" class="btn-logout">退出</button>
+            </div>
+            <div class="auth-buttons" id="authButtons">
+                <button onclick="showAuthModal('login')" class="btn-login">登录</button>
+                <button onclick="showAuthModal('register')" class="btn-register">注册</button>
+            </div>
+        </header>
+        
+        <div class="main-content" id="mainContent">
+            <div class="editor-section">
+                <div class="toolbar">
+                    <input type="text" id="snippetTitle" placeholder="代码标题" class="title-input">
+                    <select id="languageSelect" class="language-select" onchange="changeLanguage()">
+                        <option value="python">Python</option>
+                        <option value="javascript">JavaScript</option>
+                        <option value="java">Java</option>
+                        <option value="cpp">C++</option>
+                        <option value="c">C</option>
+                        <option value="go">Go</option>
+                        <option value="rust">Rust</option>
+                        <option value="ruby">Ruby</option>
+                        <option value="php">PHP</option>
+                        <option value="bash">Bash</option>
+                    </select>
+                    <button onclick="runCode()" class="btn-run">运行代码</button>
+                    <button onclick="saveCode()" class="btn-save">保存代码</button>
+                    <button onclick="clearCode()" class="btn-clear">清空</button>
+                </div>
+                
+                <div class="file-upload">
+                    <label for="fileInput" class="file-label">上传文件</label>
+                    <input type="file" id="fileInput" accept=".py,.js,.java,.cpp,.c,.go,.rs,.rb,.php,.sh,.txt" onchange="handleFileUpload(event)">
+                </div>
+                
+                <div id="editor-container"></div>
+            </div>
+            
+            <div class="output-section">
+                <div class="output-header">
+                    <span>输出结果</span>
+                    <button onclick="copyOutput()" class="btn-copy">复制</button>
+                </div>
+                <pre id="output"></pre>
+            </div>
+        </div>
+        
+        <div class="snippets-section">
+            <h2>已保存的代码</h2>
+            <div id="snippetsList" class="snippets-list"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <script>
+        let editor;
+        let currentSnippetId = null;
+        let isLoginMode = true;
+        let isLoggedIn = false;
+
+        function showAuthModal(mode) {
+            isLoginMode = mode === 'login';
+            document.getElementById('authModal').style.display = 'flex';
+            document.getElementById('authEmail').style.display = isLoginMode ? 'none' : 'block';
+            document.getElementById('authTitle').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('authBtn').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('toggleAuthBtn').textContent = isLoginMode ? '没有账号？注册' : '已有账号？登录';
+        }
+
+        function closeAuthModal() {
+            document.getElementById('authModal').style.display = 'none';
+            document.getElementById('authUsername').value = '';
+            document.getElementById('authEmail').value = '';
+            document.getElementById('authPassword').value = '';
+        }
+
+        function toggleAuthMode() {
+            showAuthMode(isLoginMode ? 'register' : 'login');
+        }
+
+        function showAuthMode(mode) {
+            isLoginMode = mode === 'login';
+            document.getElementById('authEmail').style.display = isLoginMode ? 'none' : 'block';
+            document.getElementById('authTitle').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('authBtn').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('toggleAuthBtn').textContent = isLoginMode ? '没有账号？注册' : '已有账号？登录';
+        }
+
+        async function submitAuth() {
+            const username = document.getElementById('authUsername').value;
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+
+            if (!username || !password || (!isLoginMode && !email)) {
+                alert('请填写所有字段');
+                return;
+            }
+
+            const endpoint = isLoginMode ? '/api/login' : '/api/register';
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, email, password})
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    closeAuthModal();
+                    updateUserUI(result.user);
+                    loadSnippets();
+                } else {
+                    alert(result.error);
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/logout', {method: 'POST'});
+                isLoggedIn = false;
+                document.getElementById('userInfo').style.display = 'none';
+                document.getElementById('authButtons').style.display = 'flex';
+                document.getElementById('mainContent').innerHTML = '<div style="text-align:center;padding:50px;color:#808080;">请先登录</div>';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function updateUserUI(user) {
+            isLoggedIn = true;
+            document.getElementById('usernameDisplay').textContent = user.username;
+            document.getElementById('authButtons').style.display = 'none';
+            document.getElementById('userInfo').style.display = 'flex';
+            initMainContent();
+        }
+
+        async function checkLogin() {
+            try {
+                const response = await fetch('/api/current_user');
+                const result = await response.json();
+                if (result.success && result.user) {
+                    updateUserUI(result.user);
+                    initMainContent();
+                } else {
+                    showLoginRequired();
+                }
+            } catch (e) {
+                showLoginRequired();
+            }
+        }
+
+        function showLoginRequired() {
+            document.getElementById('mainContent').innerHTML = `
+                <div style="grid-column:1/-1;text-align:center;padding:50px;color:#808080;">
+                    <h2>请先登录</h2>
+                    <p>登录后可保存和运行代码</p>
+                </div>
+            `;
+        }
+
+        function initMainContent() {
+            document.getElementById('mainContent').innerHTML = `
+                <div class="editor-section">
+                    <div class="toolbar">
+                        <input type="text" id="snippetTitle" placeholder="代码标题" class="title-input">
+                        <select id="languageSelect" class="language-select" onchange="changeLanguage()">
+                            <option value="python">Python</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="java">Java</option>
+                            <option value="cpp">C++</option>
+                            <option value="c">C</option>
+                            <option value="go">Go</option>
+                            <option value="rust">Rust</option>
+                            <option value="ruby">Ruby</option>
+                            <option value="php">PHP</option>
+                            <option value="bash">Bash</option>
+                        </select>
+                        <button onclick="runCode()" class="btn-run">运行代码</button>
+                        <button onclick="saveCode()" class="btn-save">保存代码</button>
+                        <button onclick="clearCode()" class="btn-clear">清空</button>
+                    </div>
+                    
+                    <div class="file-upload">
+                        <label for="fileInput" class="file-label">上传文件</label>
+                        <input type="file" id="fileInput" accept=".py,.js,.java,.cpp,.c,.go,.rs,.rb,.php,.sh,.txt" onchange="handleFileUpload(event)">
+                    </div>
+                    
+                    <div id="editor-container"></div>
+                </div>
+                
+                <div class="output-section">
+                    <div class="output-header">
+                        <span>输出结果</span>
+                        <button onclick="copyOutput()" class="btn-copy">复制</button>
+                    </div>
+                    <pre id="output"></pre>
+                </div>
+            `;
+            
+            require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+            require(['vs/editor/editor.main'], function () {
+                editor = monaco.editor.create(document.getElementById('editor-container'), {
+                    value: '# 输入你的代码\n',
+                    language: 'python',
+                    theme: 'vs-dark',
+                    automaticLayout: true,
+                    fontSize: 14,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    lineNumbers: 'on',
+                    renderWhitespace: 'selection',
+                    tabSize: 4,
+                    insertSpaces: true,
+                    wordWrap: 'on',
+                    folding: true,
+                    automaticLayout: true
+                });
+
+                editor.onDidChangeModelContent(() => {
+                    clearMarkers();
+                });
+            });
+            
+            loadSnippets();
+        }
+        
+        function changeLanguage() {
+            clearMarkers();
+            const lang = document.getElementById('languageSelect').value;
+            const langMap = {
+                'python': 'python',
+                'javascript': 'javascript',
+                'java': 'java',
+                'cpp': 'cpp',
+                'c': 'c',
+                'go': 'go',
+                'rust': 'rust',
+                'ruby': 'ruby',
+                'php': 'php',
+                'bash': 'shell'
+            };
+            monaco.editor.setModelLanguage(editor.getModel(), langMap[lang] || 'plaintext');
+        }
+
+        function parseCompilerError(error, language) {
+            const markers = [];
+            const lines = error.split('\n');
+            const code = editor.getValue();
+            const codeLines = code.split('\n');
+
+            if (language === 'c' || language === 'cpp') {
+                const lineMatch = /error:.*?(\d+):(\d+)/;
+                const mainC = /main\.c:(\d+):(\d+):/;
+                const mainCpp = /main\.cpp:(\d+):(\d+):/;
+                for (const line of lines) {
+                    let match = line.match(mainC) || line.match(mainCpp);
+                    if (!match) match = line.match(/(\d+):(\d+):/);
+                    if (match) {
+                        const lineNum = parseInt(match[1]);
+                        if (lineNum > 0 && lineNum <= codeLines.length) {
+                            markers.push({
+                                startLineNumber: lineNum,
+                                startColumn: 1,
+                                endLineNumber: lineNum,
+                                endColumn: codeLines[lineNum - 1].length + 1,
+                                message: line.replace(/.*?:\d+:\d+:\s*/, ''),
+                                severity: monaco.MarkerSeverity.Error
+                            });
+                        }
+                    }
+                }
+            } else if (language === 'python') {
+                const pyMatch = /File "<string>", line (\d+)/;
+                for (const line of lines) {
+                    const match = line.match(pyMatch) || line.match(/line (\d+)/);
+                    if (match) {
+                        const lineNum = parseInt(match[1]);
+                        if (lineNum > 0 && lineNum <= codeLines.length) {
+                            markers.push({
+                                startLineNumber: lineNum,
+                                startColumn: 1,
+                                endLineNumber: lineNum,
+                                endColumn: codeLines[lineNum - 1].length + 1,
+                                message: line,
+                                severity: monaco.MarkerSeverity.Error
+                            });
+                        }
+                    }
+                }
+            }
+
+            return markers;
+        }
+
+        function clearMarkers() {
+            if (editor) {
+                monaco.editor.setModelMarkers(editor.getModel(), 'compiler', []);
+            }
+        }
+
+        function showErrorMarkers(markers) {
+            if (editor && markers.length > 0) {
+                monaco.editor.setModelMarkers(editor.getModel(), 'compiler', markers);
+            }
+        }
+        
+        async function runCode() {
+            clearMarkers();
+            if (!editor) {
+                document.getElementById('output').textContent = '编辑器加载中，请稍候...';
+                return;
+            }
+            const code = editor.getValue();
+            const language = document.getElementById('languageSelect').value;
+            const output = document.getElementById('output');
+            
+            if (!code.trim()) {
+                output.textContent = '请输入代码';
+                return;
+            }
+            
+            output.textContent = '正在运行...';
+            
+            try {
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({language, code})
+                });
+                const result = await response.json();
+                const duration = result.duration || 0;
+                
+                if (result.success) {
+                    output.textContent = result.output || '(无输出)';
+                    output.textContent += `\n\n--- 耗时: ${duration}ms ---`;
+                } else {
+                    output.textContent = '错误: ' + result.error;
+                    output.textContent += `\n\n--- 耗时: ${duration}ms ---`;
+                    const markers = parseCompilerError(result.error, language);
+                    showErrorMarkers(markers);
+                }
+            } catch (e) {
+                output.textContent = '请求失败: ' + e.message;
+            }
+        }
+        
+        async function saveCode() {
+            if (!editor) {
+                alert('编辑器加载中，请稍候...');
+                return;
+            }
+            const title = document.getElementById('snippetTitle').value || '未命名';
+            const language = document.getElementById('languageSelect').value;
+            const code = editor.getValue();
+            
+            if (!title.trim()) {
+                alert('请输入标题');
+                return;
+            }
+            
+            const method = currentSnippetId ? 'PUT' : 'POST';
+            const url = currentSnippetId ? `/api/snippets/${currentSnippetId}` : '/api/snippets';
+            
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title, language, code})
+                });
+                const text = await response.text();
+                let result;
+                try {
+                    result = JSON.parse(text);
+                } catch {
+                    alert('保存失败: 服务器错误，请重新登录');
+                    return;
+                }
+                if (!response.ok || (result.success === false)) {
+                    alert(result.error || '保存失败');
+                    if (result.error && result.error.includes('登录')) {
+                        logout();
+                    }
+                    return;
+                }
+                currentSnippetId = result.id;
+                loadSnippets();
+                alert('保存成功!');
+            } catch (e) {
+                alert('保存失败: ' + e.message);
+            }
+        }
+        
+        function clearCode() {
+            clearMarkers();
+            editor.setValue('');
+            document.getElementById('snippetTitle').value = '';
+            document.getElementById('output').textContent = '';
+            currentSnippetId = null;
+        }
+        
+        async function loadSnippets() {
+            try {
+                const response = await fetch('/api/snippets', {credentials: 'same-origin'});
+                const text = await response.text();
+                let snippets;
+                try {
+                    snippets = JSON.parse(text);
+                } catch {
+                    snippets = [];
+                }
+                if (!Array.isArray(snippets)) {
+                    snippets = [];
+                }
+                const list = document.getElementById('snippetsList');
+                list.innerHTML = snippets.map(s => `
+                    <div class="snippet-item" onclick="loadSnippet(${s.id})">
+                        <div class="snippet-title">${s.title}</div>
+                        <div class="snippet-info">${s.language} | ${new Date(s.updated_at).toLocaleString()}</div>
+                        <button class="btn-delete" onclick="event.stopPropagation(); deleteSnippet(${s.id})">删除</button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('加载失败:', e);
+            }
+        }
+        
+        async function loadSnippet(id) {
+            try {
+                const response = await fetch(`/api/snippets/${id}`, {credentials: 'same-origin'});
+                const snippet = await response.json();
+                document.getElementById('snippetTitle').value = snippet.title;
+                document.getElementById('languageSelect').value = snippet.language;
+                editor.setValue(snippet.code);
+                changeLanguage();
+                currentSnippetId = id;
+            } catch (e) {
+                alert('加载失败: ' + e.message);
+            }
+        }
+        
+        async function deleteSnippet(id) {
+            if (!confirm('确定要删除吗?')) return;
+            try {
+                await fetch(`/api/snippets/${id}`, {method: 'DELETE', credentials: 'same-origin'});
+                if (currentSnippetId === id) clearCode();
+                loadSnippets();
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+        }
+        
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                editor.setValue(e.target.result);
+                
+                const ext = file.name.split('.').pop();
+                const langMap = {
+                    'py': 'python', 'js': 'javascript', 'java': 'java',
+                    'cpp': 'cpp', 'c': 'c', 'go': 'go', 'rs': 'rust',
+                    'rb': 'ruby', 'php': 'php', 'sh': 'bash'
+                };
+                if (langMap[ext]) {
+                    document.getElementById('languageSelect').value = langMap[ext];
+                    changeLanguage();
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        function copyOutput() {
+            const output = document.getElementById('output').textContent;
+            navigator.clipboard.writeText(output).then(() => {
+                alert('已复制到剪贴板');
+            });
+        }
+        
+        checkLogin();
+    </script>
+</body>
+</html>
